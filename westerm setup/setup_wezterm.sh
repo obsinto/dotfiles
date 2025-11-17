@@ -242,6 +242,15 @@ install_wezterm() {
 configure_wezterm() {
     header "Configurando WezTerm"
     
+    # ⚠️ CRÍTICO: Verificar e remover configurações conflitantes
+    # O WezTerm prioriza ~/.wezterm.lua sobre ~/.config/wezterm/wezterm.lua
+    if [ -f "$HOME/.wezterm.lua" ]; then
+        warn "Detectado arquivo de configuração conflitante: ~/.wezterm.lua"
+        log "Movendo para ~/.wezterm.lua.OLD para evitar conflitos..."
+        mv "$HOME/.wezterm.lua" "$HOME/.wezterm.lua.OLD.$(date +%Y%m%d_%H%M%S)"
+        log "✓ Conflito resolvido! O WezTerm agora usará ~/.config/wezterm/wezterm.lua"
+    fi
+    
     mkdir -p "$HOME/.config/wezterm"
     
     # Backup se já existir
@@ -260,12 +269,73 @@ return {
   line_height = 1.2,
   harfbuzz_features = { "calt=1", "clig=1", "liga=1", "rlig=1" },
 
-  -- ========== TEMA MODERNO ==========
-  color_scheme = "Catppuccin Mocha",
-  -- Alternativas: "Tokyo Night", "Dracula", "Nord", "OneDark (base16)"
+  -- ========== CORES CUSTOMIZADAS (Tokyo Night) ==========
+  -- Usando cores diretas em vez de color_scheme para máxima compatibilidade
+  colors = {
+    foreground = '#c0caf5',
+    background = '#1a1b26',
+    cursor_bg = '#c0caf5',
+    cursor_fg = '#1a1b26',
+    cursor_border = '#c0caf5',
+    selection_fg = '#c0caf5',
+    selection_bg = '#33467c',
+    
+    ansi = {
+      '#15161e', -- black
+      '#f7768e', -- red
+      '#9ece6a', -- green
+      '#e0af68', -- yellow
+      '#7aa2f7', -- blue
+      '#bb9af7', -- magenta
+      '#7dcfff', -- cyan
+      '#a9b1d6', -- white
+    },
+    
+    brights = {
+      '#414868', -- bright black
+      '#f7768e', -- bright red
+      '#9ece6a', -- bright green
+      '#e0af68', -- bright yellow
+      '#7aa2f7', -- bright blue
+      '#bb9af7', -- bright magenta
+      '#7dcfff', -- bright cyan
+      '#c0caf5', -- bright white
+    },
+    
+    tab_bar = {
+      background = '#16161e',
+      
+      active_tab = {
+        bg_color = '#7aa2f7',
+        fg_color = '#1a1b26',
+        intensity = 'Bold',
+      },
+      
+      inactive_tab = {
+        bg_color = '#292e42',
+        fg_color = '#545c7e',
+      },
+      
+      inactive_tab_hover = {
+        bg_color = '#292e42',
+        fg_color = '#7aa2f7',
+        italic = true,
+      },
+      
+      new_tab = {
+        bg_color = '#292e42',
+        fg_color = '#7aa2f7',
+      },
+      
+      new_tab_hover = {
+        bg_color = '#292e42',
+        fg_color = '#7dcfff',
+      },
+    },
+  },
 
   -- ========== TRANSPARÊNCIA & BLUR ==========
-  window_background_opacity = 0.92,
+  window_background_opacity = 0.95,
   text_background_opacity = 1.0,
 
   -- ========== JANELA ==========
@@ -284,42 +354,6 @@ return {
   hide_tab_bar_if_only_one_tab = true,
   tab_bar_at_bottom = false,
   tab_max_width = 32,
-
-  -- Cores customizadas das tabs
-  colors = {
-    background = '#1e1e2e',
-    
-    tab_bar = {
-      background = '#11111b',
-      
-      active_tab = {
-        bg_color = '#89b4fa',
-        fg_color = '#11111b',
-        intensity = 'Bold',
-      },
-      
-      inactive_tab = {
-        bg_color = '#313244',
-        fg_color = '#cdd6f4',
-      },
-      
-      inactive_tab_hover = {
-        bg_color = '#45475a',
-        fg_color = '#f5e0dc',
-        italic = true,
-      },
-      
-      new_tab = {
-        bg_color = '#313244',
-        fg_color = '#89b4fa',
-      },
-      
-      new_tab_hover = {
-        bg_color = '#45475a',
-        fg_color = '#89dceb',
-      },
-    },
-  },
 
   -- ========== CURSOR MODERNO ==========
   default_cursor_style = "BlinkingBar",
@@ -344,7 +378,7 @@ return {
   -- ========== PERFORMANCE ==========
   max_fps = 144,
   animation_fps = 60,
-  front_end = "WebGpu",
+  front_end = "OpenGL",  -- OpenGL é mais compatível que WebGpu
   scrollback_lines = 10000,
 
   -- ========== ATALHOS ==========
@@ -407,7 +441,7 @@ return {
 }
 EOF
 
-    log "WezTerm configurado com visual moderno (Catppuccin Mocha)"
+    log "WezTerm configurado com visual moderno (Tokyo Night)"
 }
 
 # Definir Zsh como shell padrão
@@ -489,9 +523,9 @@ EOF
     • Clique direito: Colar
     
     🎨 TEMA INSTALADO:
-    • Catppuccin Mocha (moderno e suave)
-    • Para mudar: edite ~/.config/wezterm/wezterm.lua
-    • Temas alternativos: Tokyo Night, Dracula, Nord
+    • Tokyo Night (azul/roxo vibrante e moderno)
+    • Para mudar cores: edite ~/.config/wezterm/wezterm.lua
+    • O instalador corrigiu conflitos de configuração automaticamente
     
     🔧 ALIASES DISPONÍVEIS:
     • sgpt: Wrapper para shell-gpt (sem aspas)
