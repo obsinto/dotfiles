@@ -146,6 +146,11 @@ install_zsh_plugins() {
     else
         warn "zsh-syntax-highlighting já está instalado"
     fi
+    
+    # Corrigir permissões dos plugins
+    log "Corrigindo permissões dos plugins..."
+    chmod 755 "$CUSTOM_DIR/plugins/zsh-autosuggestions" 2>/dev/null || true
+    chmod 755 "$CUSTOM_DIR/plugins/zsh-syntax-highlighting" 2>/dev/null || true
 }
 
 # Configurar .zshrc
@@ -239,72 +244,114 @@ configure_wezterm() {
     
     mkdir -p "$HOME/.config/wezterm"
     
+    # Backup se já existir
+    if [ -f "$HOME/.config/wezterm/wezterm.lua" ]; then
+        cp "$HOME/.config/wezterm/wezterm.lua" "$HOME/.config/wezterm/wezterm.lua.backup.$(date +%Y%m%d_%H%M%S)"
+        log "Backup do wezterm.lua criado"
+    fi
+    
     cat > "$HOME/.config/wezterm/wezterm.lua" << 'EOF'
-local wezterm = require 'wezterm';
+local wezterm = require 'wezterm'
 
 return {
-  -- Fonte principal e fallback
+  -- ========== FONTES ==========
   font = wezterm.font("MesloLGS NF", { weight = "Regular" }),
   font_size = 12.5,
   line_height = 1.2,
-
-  -- (Opcional) Definição explícita de ligaduras via HarfBuzz
   harfbuzz_features = { "calt=1", "clig=1", "liga=1", "rlig=1" },
 
-  -- Esquema de cores
-  color_scheme = "OneDark (base16)",
+  -- ========== TEMA MODERNO ==========
+  color_scheme = "Catppuccin Mocha",
+  -- Alternativas: "Tokyo Night", "Dracula", "Nord", "OneDark (base16)"
 
-  -- Transparência suave
-  window_background_opacity = 0.90,
-  text_background_opacity   = 1.0,
+  -- ========== TRANSPARÊNCIA & BLUR ==========
+  window_background_opacity = 0.92,
+  text_background_opacity = 1.0,
 
-  -- Espaçamento interno
+  -- ========== JANELA ==========
   window_padding = {
-    left   = 8,
-    right  = 8,
-    top    = 6,
-    bottom = 6,
+    left = 10,
+    right = 10,
+    top = 8,
+    bottom = 8,
+  },
+  window_decorations = "RESIZE",
+  window_close_confirmation = 'NeverPrompt',
+
+  -- ========== TABS ESTILIZADAS ==========
+  enable_tab_bar = true,
+  use_fancy_tab_bar = false,
+  hide_tab_bar_if_only_one_tab = true,
+  tab_bar_at_bottom = false,
+  tab_max_width = 32,
+
+  -- Cores customizadas das tabs
+  colors = {
+    background = '#1e1e2e',
+    
+    tab_bar = {
+      background = '#11111b',
+      
+      active_tab = {
+        bg_color = '#89b4fa',
+        fg_color = '#11111b',
+        intensity = 'Bold',
+      },
+      
+      inactive_tab = {
+        bg_color = '#313244',
+        fg_color = '#cdd6f4',
+      },
+      
+      inactive_tab_hover = {
+        bg_color = '#45475a',
+        fg_color = '#f5e0dc',
+        italic = true,
+      },
+      
+      new_tab = {
+        bg_color = '#313244',
+        fg_color = '#89b4fa',
+      },
+      
+      new_tab_hover = {
+        bg_color = '#45475a',
+        fg_color = '#89dceb',
+      },
+    },
   },
 
-  -- Decoração mínima e barra de abas
-  window_decorations           = "RESIZE",
-  hide_tab_bar_if_only_one_tab = true,
-  enable_tab_bar               = true,
-  use_fancy_tab_bar            = false,
-
-  -- Cursor
+  -- ========== CURSOR MODERNO ==========
   default_cursor_style = "BlinkingBar",
-  cursor_blink_rate    = 800,
+  cursor_blink_rate = 700,
+  cursor_thickness = "2pt",
 
-  -- Feedback de camp ("bell")
+  -- ========== FEEDBACK ==========
   audible_bell = "Disabled",
   visual_bell = {
-    fade_in_duration_ms  = 75,
-    fade_in_function     = "EaseIn",
+    fade_in_duration_ms = 75,
+    fade_in_function = "EaseIn",
     fade_out_duration_ms = 75,
-    fade_out_function    = "EaseOut",
+    fade_out_function = "EaseOut",
   },
 
-  -- Painéis inativos mais "apagados"
+  -- ========== PAINÉIS ==========
   inactive_pane_hsb = {
-    saturation = 0.6,
-    brightness = 0.5,
+    saturation = 0.7,
+    brightness = 0.6,
   },
 
-  -- Performance
+  -- ========== PERFORMANCE ==========
   max_fps = 144,
-  
-  -- ⌨️ Atalhos personalizados
+  animation_fps = 60,
+  front_end = "WebGpu",
+  scrollback_lines = 10000,
+
+  -- ========== ATALHOS ==========
   keys = {
     -- SPLITS
-    {
-      key = "h", mods = "CTRL|ALT",
-      action = wezterm.action.SplitHorizontal { domain = "CurrentPaneDomain" },
-    },
-    {
-      key = "v", mods = "CTRL|ALT",
-      action = wezterm.action.SplitVertical { domain = "CurrentPaneDomain" },
-    },
+    { key = "h", mods = "CTRL|ALT", action = wezterm.action.SplitHorizontal { domain = "CurrentPaneDomain" } },
+    { key = "v", mods = "CTRL|ALT", action = wezterm.action.SplitVertical { domain = "CurrentPaneDomain" } },
 
     -- MOVIMENTO ENTRE PAINÉIS
     { key = "LeftArrow", mods = "CTRL|ALT", action = wezterm.action.ActivatePaneDirection("Left") },
@@ -312,27 +359,55 @@ return {
     { key = "UpArrow", mods = "CTRL|ALT", action = wezterm.action.ActivatePaneDirection("Up") },
     { key = "DownArrow", mods = "CTRL|ALT", action = wezterm.action.ActivatePaneDirection("Down") },
 
-    -- FECHAR PAINEL ATUAL
-    { key = "W", mods = "CTRL|ALT", action = wezterm.action.CloseCurrentPane { confirm = true } },
+    -- REDIMENSIONAR PAINÉIS
+    { key = "LeftArrow", mods = "CTRL|SHIFT|ALT", action = wezterm.action.AdjustPaneSize { "Left", 5 } },
+    { key = "RightArrow", mods = "CTRL|SHIFT|ALT", action = wezterm.action.AdjustPaneSize { "Right", 5 } },
+    { key = "UpArrow", mods = "CTRL|SHIFT|ALT", action = wezterm.action.AdjustPaneSize { "Up", 5 } },
+    { key = "DownArrow", mods = "CTRL|SHIFT|ALT", action = wezterm.action.AdjustPaneSize { "Down", 5 } },
 
-    -- NOVA ABA
-    { key = "t", mods = "CTRL|ALT", action = wezterm.action.SpawnTab "CurrentPaneDomain" },
-    -- FECHAR SPLIT (imitando Super+W)
+    -- FECHAR PAINEL
     { key = "w", mods = "CTRL|ALT", action = wezterm.action.CloseCurrentPane { confirm = true } },
+    { key = "W", mods = "CTRL|ALT", action = wezterm.action.CloseCurrentPane { confirm = false } },
 
-    -- PRÓXIMA/ANTERIOR ABA
+    -- TABS
+    { key = "t", mods = "CTRL|ALT", action = wezterm.action.SpawnTab "CurrentPaneDomain" },
     { key = "Tab", mods = "CTRL", action = wezterm.action.ActivateTabRelative(1) },
     { key = "Tab", mods = "CTRL|SHIFT", action = wezterm.action.ActivateTabRelative(-1) },
 
-    -- ZOOM FONTE (equivalente a Ctrl+= e Ctrl+-)
+    -- ZOOM FONTE
     { key = "+", mods = "CTRL", action = "IncreaseFontSize" },
     { key = "-", mods = "CTRL", action = "DecreaseFontSize" },
     { key = "0", mods = "CTRL", action = "ResetFontSize" },
+
+    -- ZOOM NO PAINEL
+    { key = "z", mods = "CTRL|ALT", action = wezterm.action.TogglePaneZoomState },
+
+    -- BUSCA
+    { key = "f", mods = "CTRL|SHIFT", action = wezterm.action.Search "CurrentSelectionOrEmptyString" },
+
+    -- COPIAR/COLAR
+    { key = "c", mods = "CTRL|SHIFT", action = wezterm.action.CopyTo "Clipboard" },
+    { key = "v", mods = "CTRL|SHIFT", action = wezterm.action.PasteFrom "Clipboard" },
+  },
+
+  -- ========== MOUSE ==========
+  mouse_bindings = {
+    {
+      event = { Down = { streak = 1, button = "Right" } },
+      mods = "NONE",
+      action = wezterm.action.PasteFrom "Clipboard",
+    },
+  },
+
+  -- ========== HYPERLINKS ==========
+  hyperlink_rules = {
+    { regex = "\\b\\w+://[\\w.-]+\\.[a-z]{2,15}\\S*\\b", format = "$0" },
+    { regex = "\\b\\w+@[\\w-]+(\\.[\\w-]+)+\\b", format = "mailto:$0" },
   },
 }
 EOF
 
-    log "WezTerm configurado com suas preferências"
+    log "WezTerm configurado com visual moderno (Catppuccin Mocha)"
 }
 
 # Definir Zsh como shell padrão
@@ -358,7 +433,7 @@ main() {
     ║  • Zsh + Oh My Zsh                      ║
     ║  • Powerlevel10k                        ║
     ║  • Plugins: autosuggestions + syntax    ║
-    ║  • WezTerm customizado                  ║
+    ║  • WezTerm customizado (Catppuccin)     ║
     ║  • Fontes Nerd Fonts                    ║
     ║  • Aliases personalizados               ║
     ╚══════════════════════════════════════════╝
@@ -401,14 +476,31 @@ EOF
     🎨 ATALHOS DO WEZTERM:
     • Ctrl+Alt+H: Split horizontal
     • Ctrl+Alt+V: Split vertical  
-    • Ctrl+Alt+W: Fechar painel
+    • Ctrl+Alt+W: Fechar painel (com confirmação)
+    • Ctrl+Alt+Shift+W: Fechar painel (sem confirmação)
+    • Ctrl+Alt+Z: Zoom no painel (foco total)
     • Ctrl+Alt+T: Nova aba
     • Ctrl+Tab: Próxima aba
+    • Ctrl+Shift+Tab: Aba anterior
     • Ctrl+Alt+Setas: Navegar entre painéis
+    • Ctrl+Shift+Alt+Setas: Redimensionar painéis
+    • Ctrl+Shift+F: Buscar no terminal
+    • Ctrl+Shift+C/V: Copiar/Colar
+    • Clique direito: Colar
+    
+    🎨 TEMA INSTALADO:
+    • Catppuccin Mocha (moderno e suave)
+    • Para mudar: edite ~/.config/wezterm/wezterm.lua
+    • Temas alternativos: Tokyo Night, Dracula, Nord
     
     🔧 ALIASES DISPONÍVEIS:
     • sgpt: Wrapper para shell-gpt (sem aspas)
     • sail: Laravel Sail
+    
+    💡 DICAS:
+    • URLs no terminal são clicáveis automaticamente
+    • Use Ctrl+Alt+Z para focar em um painel
+    • Redimensione painéis com Ctrl+Shift+Alt+Setas
     
     Happy coding! 🚀
 EOF
