@@ -112,14 +112,14 @@ configure() {
     fi
 
     echo ""
-    ask "Intervalo de atualização em segundos (padrão: 2):"; read -r INTERVAL; INTERVAL=${INTERVAL:-2}
+    ask "Intervalo de atualização em segundos (padrão: 5):"; read -r INTERVAL; INTERVAL=${INTERVAL:-5}
     ask "Cooldown entre alertas Discord em segundos (padrão: 300):"; read -r NOTIFY_COOLDOWN; NOTIFY_COOLDOWN=${NOTIFY_COOLDOWN:-300}
     ask "Nome desta máquina no Discord (padrão: $(hostname)):"; read -r MACHINE_NAME; MACHINE_NAME=${MACHINE_NAME:-$(hostname)}
 
     echo ""
     info "Persistência de alertas para evitar spam por pico curto."
-    ask "Hotspot WARN: nº de leituras seguidas (padrão: 3):"; read -r GPU_JCT_WARN_STREAK_REQUIRED; GPU_JCT_WARN_STREAK_REQUIRED=${GPU_JCT_WARN_STREAK_REQUIRED:-3}
-    ask "Hotspot CRIT: nº de leituras seguidas (padrão: 5):"; read -r GPU_JCT_CRIT_STREAK_REQUIRED; GPU_JCT_CRIT_STREAK_REQUIRED=${GPU_JCT_CRIT_STREAK_REQUIRED:-5}
+    ask "Hotspot WARN: nº de leituras seguidas (padrão: 4):"; read -r GPU_JCT_WARN_STREAK_REQUIRED; GPU_JCT_WARN_STREAK_REQUIRED=${GPU_JCT_WARN_STREAK_REQUIRED:-4}
+    ask "Hotspot CRIT: nº de leituras seguidas (padrão: 3):"; read -r GPU_JCT_CRIT_STREAK_REQUIRED; GPU_JCT_CRIT_STREAK_REQUIRED=${GPU_JCT_CRIT_STREAK_REQUIRED:-3}
     ask "Histerese em °C para limpar estado (padrão: 3):"; read -r ALERT_HYSTERESIS; ALERT_HYSTERESIS=${ALERT_HYSTERESIS:-3}
 
     echo ""
