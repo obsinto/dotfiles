@@ -20,7 +20,7 @@ error()   { echo -e "  ${RED}${BOLD}✗${RESET} $1"; }
 ask()     { echo -ne "  ${WHITE}${BOLD}?${RESET} $1 "; }
 
 header() {
-    clear
+    clear || true
     echo -e "${CYAN}${BOLD}"
     echo "  ╔══════════════════════════════════════════════════════╗"
     echo "  ║        Instalação — Monitor de Temperatura           ║"
@@ -38,7 +38,7 @@ section() {
 check_deps() {
     section "Verificando dependências"
     local missing=()
-    for cmd in sensors python3 curl awk systemctl; do
+    for cmd in bash sensors python3 curl awk systemctl; do
         if command -v "$cmd" &>/dev/null; then
             success "$cmd encontrado"
         else
@@ -56,7 +56,8 @@ check_deps() {
             for pkg in "${missing[@]}"; do
                 case "$pkg" in
                     sensors) pkg="lm-sensors" ;;
-                    python3|curl|awk|systemctl) ;;
+                    bash|python3|curl|awk) ;;
+                    systemctl) continue ;;
                     *) continue ;;
                 esac
                 sudo apt-get install -y "$pkg"
@@ -87,6 +88,7 @@ configure() {
 
     echo ""
     info "Limiares recomendados para Ryzen 5 9600X + RX 7600 + DDR5."
+    info "A RX 7600 foi ajustada para não tratar pico curto de hotspot como crítico."
     ask "Usar limiares recomendados? (S/n)"; read -r use_defaults
 
     if [[ "$use_defaults" =~ ^[Nn]$ ]]; then
@@ -94,25 +96,31 @@ configure() {
         ask "CPU CRÍTICO °C         (padrão: 92):"; read -r CPU_CRIT;      CPU_CRIT=${CPU_CRIT:-92}
         ask "GPU Edge ATENÇÃO °C    (padrão: 80):"; read -r GPU_EDGE_WARN; GPU_EDGE_WARN=${GPU_EDGE_WARN:-80}
         ask "GPU Edge CRÍTICO °C    (padrão: 90):"; read -r GPU_EDGE_CRIT; GPU_EDGE_CRIT=${GPU_EDGE_CRIT:-90}
-        ask "GPU Hotspot ATENÇÃO °C (padrão: 85):"; read -r GPU_JCT_WARN;  GPU_JCT_WARN=${GPU_JCT_WARN:-85}
-        ask "GPU Hotspot CRÍTICO °C (padrão: 95):"; read -r GPU_JCT_CRIT;  GPU_JCT_CRIT=${GPU_JCT_CRIT:-95}
-        ask "RAM ATENÇÃO °C         (padrão: 50):"; read -r RAM_WARN;      RAM_WARN=${RAM_WARN:-50}
-        ask "RAM CRÍTICO °C         (padrão: 75):"; read -r RAM_CRIT;      RAM_CRIT=${RAM_CRIT:-75}
+        ask "GPU Hotspot ATENÇÃO °C (padrão: 95):"; read -r GPU_JCT_WARN;  GPU_JCT_WARN=${GPU_JCT_WARN:-95}
+        ask "GPU Hotspot CRÍTICO °C (padrão: 105):"; read -r GPU_JCT_CRIT; GPU_JCT_CRIT=${GPU_JCT_CRIT:-105}
+        ask "RAM ATENÇÃO °C         (padrão: 55):"; read -r RAM_WARN;      RAM_WARN=${RAM_WARN:-55}
+        ask "RAM CRÍTICO °C         (padrão: 80):"; read -r RAM_CRIT;      RAM_CRIT=${RAM_CRIT:-80}
         ask "SSD ATENÇÃO °C         (padrão: 60):"; read -r SSD_WARN;      SSD_WARN=${SSD_WARN:-60}
         ask "SSD CRÍTICO °C         (padrão: 75):"; read -r SSD_CRIT;      SSD_CRIT=${SSD_CRIT:-75}
     else
         CPU_WARN=85;      CPU_CRIT=92
         GPU_EDGE_WARN=80; GPU_EDGE_CRIT=90
-        GPU_JCT_WARN=85;  GPU_JCT_CRIT=95
-        RAM_WARN=50;      RAM_CRIT=75
+        GPU_JCT_WARN=95;  GPU_JCT_CRIT=105
+        RAM_WARN=55;      RAM_CRIT=80
         SSD_WARN=60;      SSD_CRIT=75
         success "Limiares recomendados aplicados."
     fi
 
     echo ""
-    ask "Intervalo de atualização em segundos (padrão: 2):";         read -r INTERVAL;        INTERVAL=${INTERVAL:-2}
+    ask "Intervalo de atualização em segundos (padrão: 2):"; read -r INTERVAL; INTERVAL=${INTERVAL:-2}
     ask "Cooldown entre alertas Discord em segundos (padrão: 300):"; read -r NOTIFY_COOLDOWN; NOTIFY_COOLDOWN=${NOTIFY_COOLDOWN:-300}
-    ask "Nome desta máquina no Discord (padrão: $(hostname)):";      read -r MACHINE_NAME;    MACHINE_NAME=${MACHINE_NAME:-$(hostname)}
+    ask "Nome desta máquina no Discord (padrão: $(hostname)):"; read -r MACHINE_NAME; MACHINE_NAME=${MACHINE_NAME:-$(hostname)}
+
+    echo ""
+    info "Persistência de alertas para evitar spam por pico curto."
+    ask "Hotspot WARN: nº de leituras seguidas (padrão: 3):"; read -r GPU_JCT_WARN_STREAK_REQUIRED; GPU_JCT_WARN_STREAK_REQUIRED=${GPU_JCT_WARN_STREAK_REQUIRED:-3}
+    ask "Hotspot CRIT: nº de leituras seguidas (padrão: 5):"; read -r GPU_JCT_CRIT_STREAK_REQUIRED; GPU_JCT_CRIT_STREAK_REQUIRED=${GPU_JCT_CRIT_STREAK_REQUIRED:-5}
+    ask "Histerese em °C para limpar estado (padrão: 3):"; read -r ALERT_HYSTERESIS; ALERT_HYSTERESIS=${ALERT_HYSTERESIS:-3}
 
     echo ""
     success "Configuração concluída."
@@ -135,11 +143,13 @@ CPU_CRIT=${CPU_CRIT}
 GPU_EDGE_WARN=${GPU_EDGE_WARN}
 GPU_EDGE_CRIT=${GPU_EDGE_CRIT}
 
-# GPU Junction/Hotspot — AMD RX 7600 (limite real: 110°C)
+# GPU Junction/Hotspot — AMD RX 7600
+# Ajustado para evitar spam com picos curtos
 GPU_JCT_WARN=${GPU_JCT_WARN}
 GPU_JCT_CRIT=${GPU_JCT_CRIT}
+GPU_JCT_MAX=110
 
-# GPU Memory — AMD RX 7600 (limite real: 105°C)
+# GPU Memory — AMD RX 7600 (GDDR6)
 MEM_WARN=85
 MEM_CRIT=100
 
@@ -147,17 +157,32 @@ MEM_CRIT=100
 RAM_WARN=${RAM_WARN}
 RAM_CRIT=${RAM_CRIT}
 
-# SSD NVMe (crítico fabricante: 81°C)
+# SSD NVMe
 SSD_WARN=${SSD_WARN}
 SSD_CRIT=${SSD_CRIT}
 
 INTERVAL=${INTERVAL}
 NOTIFY_COOLDOWN=${NOTIFY_COOLDOWN}
 MACHINE_NAME="${MACHINE_NAME}"
+
+# Anti-spam / persistência
+ALERT_HYSTERESIS=${ALERT_HYSTERESIS}
+CPU_WARN_STREAK_REQUIRED=2
+CPU_CRIT_STREAK_REQUIRED=3
+GPU_EDGE_WARN_STREAK_REQUIRED=2
+GPU_EDGE_CRIT_STREAK_REQUIRED=3
+GPU_JCT_WARN_STREAK_REQUIRED=${GPU_JCT_WARN_STREAK_REQUIRED}
+GPU_JCT_CRIT_STREAK_REQUIRED=${GPU_JCT_CRIT_STREAK_REQUIRED}
+GPU_MEM_WARN_STREAK_REQUIRED=2
+GPU_MEM_CRIT_STREAK_REQUIRED=3
+RAM_WARN_STREAK_REQUIRED=2
+RAM_CRIT_STREAK_REQUIRED=3
+SSD_WARN_STREAK_REQUIRED=2
+SSD_CRIT_STREAK_REQUIRED=3
 EOF
     chmod 600 "$CONFIG_FILE"
     success "Salvo em ${CONFIG_FILE}"
-    warn "⚠️  Não inclua este arquivo em backups não criptografados (contém webhook do Discord)."
+    warn "⚠️  Não inclua este arquivo em backups não criptografados."
 }
 
 # ─── Instala script principal ─────────────────────────────────────────────────
@@ -167,44 +192,68 @@ install_monitor() {
 
     cat > "$MONITOR_SCRIPT" <<'MONITOR_EOF'
 #!/usr/bin/env bash
-# sensors-monitor — monitor de temperatura com alertas Discord
+set -u
 
 CONFIG="$HOME/.config/sensors-monitor/config.env"
 [[ -f "$CONFIG" ]] && source "$CONFIG"
 
 INTERVAL=${INTERVAL:-2}
-CPU_WARN=${CPU_WARN:-85};           CPU_CRIT=${CPU_CRIT:-92}
-GPU_EDGE_WARN=${GPU_EDGE_WARN:-80}; GPU_EDGE_CRIT=${GPU_EDGE_CRIT:-90}
-GPU_JCT_WARN=${GPU_JCT_WARN:-85};  GPU_JCT_CRIT=${GPU_JCT_CRIT:-95}
-MEM_WARN=${MEM_WARN:-85};          MEM_CRIT=${MEM_CRIT:-100}
-RAM_WARN=${RAM_WARN:-50};          RAM_CRIT=${RAM_CRIT:-75}
-SSD_WARN=${SSD_WARN:-60};          SSD_CRIT=${SSD_CRIT:-75}
+
+CPU_WARN=${CPU_WARN:-85}
+CPU_CRIT=${CPU_CRIT:-92}
+
+GPU_EDGE_WARN=${GPU_EDGE_WARN:-80}
+GPU_EDGE_CRIT=${GPU_EDGE_CRIT:-90}
+
+GPU_JCT_WARN=${GPU_JCT_WARN:-95}
+GPU_JCT_CRIT=${GPU_JCT_CRIT:-105}
+GPU_JCT_MAX=${GPU_JCT_MAX:-110}
+
+MEM_WARN=${MEM_WARN:-85}
+MEM_CRIT=${MEM_CRIT:-100}
+
+RAM_WARN=${RAM_WARN:-55}
+RAM_CRIT=${RAM_CRIT:-80}
+
+SSD_WARN=${SSD_WARN:-60}
+SSD_CRIT=${SSD_CRIT:-75}
+
 NOTIFY_COOLDOWN=${NOTIFY_COOLDOWN:-300}
 MACHINE_NAME=${MACHINE_NAME:-$(hostname)}
 
-# Diretório para persistência de cooldown entre reinicializações
-LOCK_DIR="/tmp/sensors-monitor-$$"
-COOLDOWN_DIR="/tmp/sensors-monitor-cooldown"
-mkdir -p "$COOLDOWN_DIR"
-chmod 700 "$COOLDOWN_DIR"
+ALERT_HYSTERESIS=${ALERT_HYSTERESIS:-3}
 
-RESET='\033[0m'; BOLD='\033[1m'; YELLOW='\033[0;33m'
-GREEN='\033[0;32m'; CYAN='\033[0;36m'; WHITE='\033[1;37m'
-DIM='\033[2m'; BG_RED='\033[41m'
+CPU_WARN_STREAK_REQUIRED=${CPU_WARN_STREAK_REQUIRED:-2}
+CPU_CRIT_STREAK_REQUIRED=${CPU_CRIT_STREAK_REQUIRED:-3}
+GPU_EDGE_WARN_STREAK_REQUIRED=${GPU_EDGE_WARN_STREAK_REQUIRED:-2}
+GPU_EDGE_CRIT_STREAK_REQUIRED=${GPU_EDGE_CRIT_STREAK_REQUIRED:-3}
+GPU_JCT_WARN_STREAK_REQUIRED=${GPU_JCT_WARN_STREAK_REQUIRED:-3}
+GPU_JCT_CRIT_STREAK_REQUIRED=${GPU_JCT_CRIT_STREAK_REQUIRED:-5}
+GPU_MEM_WARN_STREAK_REQUIRED=${GPU_MEM_WARN_STREAK_REQUIRED:-2}
+GPU_MEM_CRIT_STREAK_REQUIRED=${GPU_MEM_CRIT_STREAK_REQUIRED:-3}
+RAM_WARN_STREAK_REQUIRED=${RAM_WARN_STREAK_REQUIRED:-2}
+RAM_CRIT_STREAK_REQUIRED=${RAM_CRIT_STREAK_REQUIRED:-3}
+SSD_WARN_STREAK_REQUIRED=${SSD_WARN_STREAK_REQUIRED:-2}
+SSD_CRIT_STREAK_REQUIRED=${SSD_CRIT_STREAK_REQUIRED:-3}
+
+COOLDOWN_DIR="/tmp/sensors-monitor-cooldown"
+STATE_DIR="/tmp/sensors-monitor-state"
+mkdir -p "$COOLDOWN_DIR" "$STATE_DIR"
+chmod 700 "$COOLDOWN_DIR" "$STATE_DIR"
+
+RESET=$'\033[0m'; BOLD=$'\033[1m'; YELLOW=$'\033[0;33m'
+GREEN=$'\033[0;32m'; CYAN=$'\033[0;36m'; WHITE=$'\033[1;37m'
+DIM=$'\033[2m'; BG_RED=$'\033[41m'
 
 DAEMON_MODE=0
 [[ "${1:-}" == "--daemon" ]] && DAEMON_MODE=1
 
-# ─── Limpeza ao sair ─────────────────────────────────────────────────────────
 cleanup() {
-    # Restaura cursor e deixa o terminal limpo
     tput cnorm 2>/dev/null || true
     echo -e "${RESET}"
-    [[ -d "$LOCK_DIR" ]] && rm -rf "$LOCK_DIR"
 }
 trap cleanup EXIT INT TERM
 
-# ─── Logging ──────────────────────────────────────────────────────────────────
 log_msg() {
     local level=$1
     shift
@@ -213,7 +262,6 @@ log_msg() {
     fi
 }
 
-# ─── Cores por temperatura ────────────────────────────────────────────────────
 temp_color() {
     local v=$1 w=$2 c=$3
     if awk "BEGIN{exit !($v >= $c)}"; then
@@ -225,7 +273,6 @@ temp_color() {
     fi
 }
 
-# ─── Barra de progresso ───────────────────────────────────────────────────────
 draw_bar() {
     local v=$1 max=$2 w=$3 c=$4
     local width=30
@@ -242,7 +289,6 @@ draw_bar() {
     echo -e "${color}${bar}${RESET}"
 }
 
-# ─── Linha de sensor ──────────────────────────────────────────────────────────
 sensor_line() {
     local label=$1 v=$2 w=$3 c=$4 max=${5:-110}
     local color
@@ -259,58 +305,60 @@ sensor_line() {
         "$label" "$bar" "${color}${icon}${RESET}" "$v"
 }
 
-# ─── Contexto para alertas Discord ───────────────────────────────────────────
 build_discord_context() {
-    local sensor=$1 level=$2 fan=$3
+    local sensor=$1 level=$2 fan=$3 val=${4:-0}
     local context="" fan_info=""
 
     [[ -n "$fan" && "$fan" != "N/A" && "$fan" != "0" ]] && fan_info="**Fan GPU:** \`${fan} RPM\`"
-    [[ "$fan" == "0" ]] && fan_info="**Fan GPU:** \`0 RPM — cooler parado ou passivo\`"
+    [[ "$fan" == "0" ]] && fan_info="**Fan GPU:** \`0 RPM — cooler parado ou passivo ⚠️\`"
 
     case "$sensor" in
         "CPU")
             [[ "$level" == "CRIT" ]] \
-                && context="Você está a 3°C do throttling oficial AMD (95°C). Performance pode ser reduzida automaticamente." \
-                || context="Carga alta no Zen 5. Normal para picos, mas o sistema está sendo bastante exigido."
+                && context="CPU próxima do throttling. Se sustentar, revise fan curve e fluxo de ar." \
+                || context="CPU em carga alta. Observe se permanece elevada por vários minutos."
             ;;
         "GPU Edge")
             [[ "$level" == "CRIT" ]] \
-                && context="Temperatura global da RX 7600 acima do esperado. Verifique o fluxo de ar do gabinete." \
-                || context="A RX 7600 costuma operar abaixo de 80°C. Fluxo de ar do gabinete pode estar insuficiente."
+                && context="Temperatura global da GPU alta. Verifique airflow do gabinete." \
+                || context="GPU Edge acima do ideal. Observe o comportamento durante o jogo."
             ;;
         "GPU Junction")
+            local margem
+            margem=$(awk "BEGIN{printf \"%d\", $GPU_JCT_MAX - $val}")
             [[ "$level" == "CRIT" ]] \
-                && context="Hotspot a 15°C do limite real (110°C). Ponto mais quente do die — monitore de perto." \
-                || context="Hotspot elevado. Limite real da RX 7600 é 110°C, mas atenção ao fluxo de ar."
+                && context="Hotspot sustentado e a ${margem}°C do limite real (${GPU_JCT_MAX}°C). Vale revisar airflow, curva de fan ou undervolt." \
+                || context="Hotspot elevado, mas ainda abaixo do limite real. Picos curtos não devem gerar alarme imediato."
             ;;
         "GPU Memory")
-            context="Memória GDDR6 elevada. Verifique o fluxo de ar sobre a GPU."
+            context="Memória GDDR6 elevada. Verifique ventilação da placa e do gabinete."
             ;;
         "RAM DDR5")
             [[ "$level" == "CRIT" ]] \
-                && context="Temperatura da RAM DDR5 crítica. Verifique o fluxo de ar no gabinete e XMP/EXPO." \
-                || context="RAM DDR5 aquecendo. Limite do fabricante é 85°C."
+                && context="RAM DDR5 em temperatura crítica. Verifique airflow e perfil EXPO/XMP." \
+                || context="RAM DDR5 aquecendo. Observe se é temperatura sustentada."
             ;;
         "SSD NVMe")
             [[ "$level" == "CRIT" ]] \
-                && context="SSD próximo do limite crítico do fabricante (81°C). Pode ocorrer throttling de leitura/escrita." \
-                || context="SSD aquecendo. Acima de 75°C pode haver redução de performance."
+                && context="SSD próximo de throttling térmico." \
+                || context="SSD aquecendo. Observe a ventilação na região do NVMe."
+            ;;
+        "GPU Fan")
+            context="Fan da GPU reportando 0 RPM com temperatura elevada."
             ;;
     esac
 
     echo "${context}|${fan_info}"
 }
 
-# ─── Cooldown persistente via arquivo ────────────────────────────────────────
-# Persiste entre reinicializações do serviço (usa /tmp que sobrevive à sessão)
 _cooldown_key() {
-    # Sanitiza o nome do sensor para ser um nome de arquivo seguro
-    echo "$1" | tr ' ' '_' | tr -cd '[:alnum:]_'
+    local sensor=$1 level=${2:-"ANY"}
+    echo "${sensor}_${level}" | tr ' ' '_' | tr -cd '[:alnum:]_'
 }
 
 _get_last_notified() {
     local key
-    key=$(_cooldown_key "$1")
+    key=$(_cooldown_key "$1" "${2:-}")
     local file="$COOLDOWN_DIR/${key}"
     if [[ -f "$file" ]]; then
         cat "$file"
@@ -321,33 +369,57 @@ _get_last_notified() {
 
 _set_last_notified() {
     local key
-    key=$(_cooldown_key "$1")
-    echo "$2" > "$COOLDOWN_DIR/${key}"
+    key=$(_cooldown_key "$1" "${2:-}")
+    echo "$3" > "$COOLDOWN_DIR/${key}"
 }
 
-# ─── Envio de alerta Discord ──────────────────────────────────────────────────
+_state_file() {
+    local sensor=$1
+    echo "$STATE_DIR/$(echo "$sensor" | tr ' ' '_' | tr -cd '[:alnum:]_').state"
+}
+
+_get_state_value() {
+    local sensor=$1 field=$2
+    local file
+    file=$(_state_file "$sensor")
+    [[ -f "$file" ]] || { echo ""; return; }
+    awk -F= -v k="$field" '$1==k {print $2}' "$file"
+}
+
+_set_state() {
+    local sensor=$1 status=$2 warn_count=$3 crit_count=$4
+    local file
+    file=$(_state_file "$sensor")
+    cat > "$file" <<EOF
+status=$status
+warn_count=$warn_count
+crit_count=$crit_count
+EOF
+}
+
 discord_notify() {
     local sensor=$1 val=$2 level=$3 fan=${4:-"N/A"}
-    [[ -z "$DISCORD_WEBHOOK" ]] && return
+    [[ -z "${DISCORD_WEBHOOK:-}" ]] && return
 
     local now
     now=$(date +%s)
+
     local last
-    last=$(_get_last_notified "$sensor")
+    last=$(_get_last_notified "$sensor" "$level")
 
     if (( now - last < NOTIFY_COOLDOWN )); then
         local remaining=$(( NOTIFY_COOLDOWN - (now - last) ))
-        log_msg "DEBUG" "Cooldown ativo para ${sensor}: faltam ${remaining}s"
+        log_msg "DEBUG" "Cooldown ativo para ${sensor}/${level}: faltam ${remaining}s"
         return
     fi
 
-    _set_last_notified "$sensor" "$now"
+    _set_last_notified "$sensor" "$level" "$now"
 
     local color=16776960 emoji="🟡" title="Temperatura elevada"
     [[ "$level" == "CRIT" ]] && color=15158332 && emoji="🔴" && title="TEMPERATURA CRÍTICA"
 
     local raw
-    raw=$(build_discord_context "$sensor" "$level" "$fan")
+    raw=$(build_discord_context "$sensor" "$level" "$fan" "$val")
     local context="${raw%%|*}"
     local fan_info="${raw##*|}"
 
@@ -375,23 +447,107 @@ discord_notify() {
         log_msg "INFO" "Alerta enviado: ${sensor} ${val}°C (${level})"
     else
         log_msg "ERROR" "Falha ao enviar alerta Discord para ${sensor} — HTTP ${http_code}"
-        # Reverte o timestamp para tentar novamente no próximo ciclo
-        _set_last_notified "$sensor" "$last"
+        _set_last_notified "$sensor" "$level" "$last"
     fi
 }
 
-# ─── Checa e notifica ─────────────────────────────────────────────────────────
+required_streak() {
+    local sensor=$1 level=$2
+    case "$sensor:$level" in
+        "CPU:WARN") echo "$CPU_WARN_STREAK_REQUIRED" ;;
+        "CPU:CRIT") echo "$CPU_CRIT_STREAK_REQUIRED" ;;
+        "GPU Edge:WARN") echo "$GPU_EDGE_WARN_STREAK_REQUIRED" ;;
+        "GPU Edge:CRIT") echo "$GPU_EDGE_CRIT_STREAK_REQUIRED" ;;
+        "GPU Junction:WARN") echo "$GPU_JCT_WARN_STREAK_REQUIRED" ;;
+        "GPU Junction:CRIT") echo "$GPU_JCT_CRIT_STREAK_REQUIRED" ;;
+        "GPU Memory:WARN") echo "$GPU_MEM_WARN_STREAK_REQUIRED" ;;
+        "GPU Memory:CRIT") echo "$GPU_MEM_CRIT_STREAK_REQUIRED" ;;
+        "RAM DDR5:WARN") echo "$RAM_WARN_STREAK_REQUIRED" ;;
+        "RAM DDR5:CRIT") echo "$RAM_CRIT_STREAK_REQUIRED" ;;
+        "SSD NVMe:WARN") echo "$SSD_WARN_STREAK_REQUIRED" ;;
+        "SSD NVMe:CRIT") echo "$SSD_CRIT_STREAK_REQUIRED" ;;
+        *) echo 1 ;;
+    esac
+}
+
 check_notify() {
-    local sensor=$1 val=$2 w=$3 c=$4 fan=${5:-"N/A"}
+    local sensor=$1 val=$2 warn=$3 crit=$4 fan=${5:-"N/A"}
     [[ -z "$val" || "$val" == "N/A" ]] && return
-    if awk "BEGIN{exit !($val >= $c)}"; then
-        discord_notify "$sensor" "$val" "CRIT" "$fan"
-    elif awk "BEGIN{exit !($val >= $w)}"; then
-        discord_notify "$sensor" "$val" "WARN" "$fan"
+
+    local status warn_count crit_count
+    status=$(_get_state_value "$sensor" "status")
+    warn_count=$(_get_state_value "$sensor" "warn_count")
+    crit_count=$(_get_state_value "$sensor" "crit_count")
+
+    [[ -z "$status" ]] && status="NORMAL"
+    [[ -z "$warn_count" ]] && warn_count=0
+    [[ -z "$crit_count" ]] && crit_count=0
+
+    local reset_warn_threshold reset_crit_threshold
+    reset_warn_threshold=$(awk "BEGIN{printf \"%.1f\", $warn - $ALERT_HYSTERESIS}")
+    reset_crit_threshold=$(awk "BEGIN{printf \"%.1f\", $crit - $ALERT_HYSTERESIS}")
+
+    if awk "BEGIN{exit !($val >= $crit)}"; then
+        crit_count=$((crit_count + 1))
+        warn_count=$((warn_count + 1))
+
+        if [[ "$status" != "CRIT" ]]; then
+            local needed
+            needed=$(required_streak "$sensor" "CRIT")
+            if (( crit_count >= needed )); then
+                discord_notify "$sensor" "$val" "CRIT" "$fan"
+                status="CRIT"
+            fi
+        fi
+
+    elif awk "BEGIN{exit !($val >= $warn)}"; then
+        warn_count=$((warn_count + 1))
+        crit_count=0
+
+        if [[ "$status" == "CRIT" ]]; then
+            if awk "BEGIN{exit !($val <= $reset_crit_threshold)}"; then
+                status="WARN"
+            fi
+        fi
+
+        if [[ "$status" == "NORMAL" ]]; then
+            local needed
+            needed=$(required_streak "$sensor" "WARN")
+            if (( warn_count >= needed )); then
+                discord_notify "$sensor" "$val" "WARN" "$fan"
+                status="WARN"
+            fi
+        fi
+
+    else
+        crit_count=0
+
+        if [[ "$status" == "CRIT" ]]; then
+            if awk "BEGIN{exit !($val <= $reset_crit_threshold)}"; then
+                status="NORMAL"
+                warn_count=0
+            fi
+        elif [[ "$status" == "WARN" ]]; then
+            if awk "BEGIN{exit !($val <= $reset_warn_threshold)}"; then
+                status="NORMAL"
+                warn_count=0
+            fi
+        else
+            warn_count=0
+        fi
     fi
+
+    _set_state "$sensor" "$status" "$warn_count" "$crit_count"
 }
 
-# ─── Parser de sensores (Python) ──────────────────────────────────────────────
+check_fan_stopped() {
+    local fan=$1 gpu_temp=$2
+    [[ -z "$fan" || "$fan" == "N/A" ]] && return
+    [[ "$fan" != "0" ]] && return
+    awk "BEGIN{exit !($gpu_temp >= $GPU_EDGE_WARN)}" || return
+    discord_notify "GPU Fan" "$gpu_temp" "WARN" "0"
+}
+
 parse_sensors() {
     python3 -c "
 import json, sys
@@ -413,13 +569,11 @@ eth = ssd = ram1 = ram2 = mb_fan = 'N/A'
 for adapter, sensors in data.items():
     a = adapter.lower()
 
-    # CPU Ryzen
     if 'k10temp' in a:
         for sname, sdata in sensors.items():
             if isinstance(sdata, dict) and 'temp1_input' in sdata:
                 cpu = f'{sdata[\"temp1_input\"]:.1f}'
 
-    # Fan placa-mãe / gabinete
     if 'nct6799' in a or 'isa-0290' in a:
         for sname, sdata in sensors.items():
             if not isinstance(sdata, dict):
@@ -439,7 +593,6 @@ for adapter, sensors in data.items():
                         except Exception:
                             pass
 
-    # GPU RX 7600 / AMDGPU
     if 'amdgpu' in a:
         for sname, sdata in sensors.items():
             if not isinstance(sdata, dict):
@@ -476,20 +629,17 @@ for adapter, sensors in data.items():
                 elif 'power1_average' in sdata:
                     gpu_pwr = f'{sdata[\"power1_average\"]:.1f}'
 
-    # Ethernet
     if 'r8169' in a:
         for sname, sdata in sensors.items():
             if isinstance(sdata, dict) and 'temp1_input' in sdata:
                 eth = f'{sdata[\"temp1_input\"]:.1f}'
 
-    # SSD NVMe
     if 'nvme' in a:
         for sname, sdata in sensors.items():
             if isinstance(sdata, dict) and 'temp1_input' in sdata:
                 ssd = f'{sdata[\"temp1_input\"]:.1f}'
                 break
 
-    # RAM DDR5
     if 'spd5118' in a:
         for sname, sdata in sensors.items():
             if isinstance(sdata, dict) and 'temp1_input' in sdata:
@@ -502,7 +652,6 @@ print(cpu, gpu_edge, gpu_jct, gpu_mem, gpu_fan, gpu_pwr, eth, ssd, ram1, ram2, m
 "
 }
 
-# ─── Render UI ────────────────────────────────────────────────────────────────
 render_ui() {
     local NOW=$1
     local CPU_TEMP=$2
@@ -517,9 +666,8 @@ render_ui() {
     local RAM2=${11}
     local MB_FAN=${12}
 
-    # Oculta cursor durante o redesenho para evitar flickering
     tput civis 2>/dev/null || true
-    clear
+    clear || true
 
     echo -e "${CYAN}${BOLD}"
     echo "  ╔══════════════════════════════════════════════════════╗"
@@ -539,7 +687,7 @@ render_ui() {
     echo ""
 
     echo -e "  ${BOLD}${CYAN}[ GPU — AMD Radeon RX 7600 ]${RESET}"
-    echo -e "  ${DIM}Edge warn: ${GPU_EDGE_WARN}°C   Junction crit: ${GPU_JCT_CRIT}°C   Limite real: 110°C${RESET}"
+    echo -e "  ${DIM}Edge warn: ${GPU_EDGE_WARN}°C   Junction warn: ${GPU_JCT_WARN}°C   Junction crit: ${GPU_JCT_CRIT}°C   Limite real: ${GPU_JCT_MAX}°C${RESET}"
     echo ""
     [[ "$GPU_EDGE" != "N/A" ]] && sensor_line "GPU Edge (global)"  "$GPU_EDGE" "$GPU_EDGE_WARN" "$GPU_EDGE_CRIT" 110
     [[ "$GPU_JCT"  != "N/A" ]] && sensor_line "GPU Junction (hot)" "$GPU_JCT"  "$GPU_JCT_WARN"  "$GPU_JCT_CRIT"  110
@@ -576,8 +724,9 @@ render_ui() {
     [[ "$ETH_TEMP" != "N/A" ]] && sensor_line "Ethernet" "$ETH_TEMP" 80 110 120
     echo ""
 
-    if [[ -n "$DISCORD_WEBHOOK" ]]; then
-        echo -e "  ${DIM}Discord: ${GREEN}ativo${RESET}${DIM}  |  cooldown: ${NOTIFY_COOLDOWN}s${RESET}"
+    if [[ -n "${DISCORD_WEBHOOK:-}" ]]; then
+        echo -e "  ${DIM}Discord: ${GREEN}ativo${RESET}${DIM}  | cooldown: ${NOTIFY_COOLDOWN}s${RESET}"
+        echo -e "  ${DIM}Persistência Junction: WARN=${GPU_JCT_WARN_STREAK_REQUIRED} | CRIT=${GPU_JCT_CRIT_STREAK_REQUIRED} leituras${RESET}"
     else
         echo -e "  ${DIM}Discord: desativado${RESET}"
     fi
@@ -585,22 +734,18 @@ render_ui() {
     echo -e "  ${GREEN}[ OK ]${RESET} Normal   ${YELLOW}[WARN]${RESET} Atenção   ${BG_RED}${WHITE}[CRIT]${RESET} Crítico"
     echo ""
 
-    # Restaura cursor
     tput cnorm 2>/dev/null || true
 }
 
-# ─── Loop principal ───────────────────────────────────────────────────────────
 main_loop() {
     log_msg "INFO" "Iniciando sensors-monitor (daemon=$DAEMON_MODE, intervalo=${INTERVAL}s)"
 
     while true; do
-        # Captura saída do sensors; em caso de falha usa string vazia (tratada pelo Python)
         SENSORS_JSON=$(sensors -j 2>/dev/null || true)
 
         read -r CPU_TEMP GPU_EDGE GPU_JCT GPU_MEM GPU_FAN GPU_PWR ETH_TEMP SSD_TEMP RAM1 RAM2 MB_FAN \
             < <(parse_sensors <<< "$SENSORS_JSON")
 
-        # Média da RAM ou valor único
         RAM_TEMP="N/A"
         if [[ "$RAM1" != "N/A" && "$RAM2" != "N/A" ]]; then
             RAM_TEMP=$(awk "BEGIN{printf \"%.1f\", ($RAM1 + $RAM2) / 2}")
@@ -614,6 +759,8 @@ main_loop() {
         check_notify "GPU Memory"   "$GPU_MEM"  "$MEM_WARN"      "$MEM_CRIT"      "$GPU_FAN"
         check_notify "RAM DDR5"     "$RAM_TEMP" "$RAM_WARN"      "$RAM_CRIT"
         check_notify "SSD NVMe"     "$SSD_TEMP" "$SSD_WARN"      "$SSD_CRIT"
+
+        [[ "$GPU_EDGE" != "N/A" ]] && check_fan_stopped "$GPU_FAN" "$GPU_EDGE"
 
         if [[ "$DAEMON_MODE" -eq 0 ]]; then
             NOW=$(date '+%d/%m/%Y %H:%M:%S')
@@ -636,8 +783,7 @@ MONITOR_EOF
 ensure_path() {
     if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
         local rc="$HOME/.bashrc"
-        [[ "$SHELL" == */zsh ]] && rc="$HOME/.zshrc"
-        # Evita duplicar a linha se já existir no rc
+        [[ "${SHELL:-}" == */zsh ]] && rc="$HOME/.zshrc"
         if ! grep -qF 'export PATH="$HOME/.local/bin:$PATH"' "$rc" 2>/dev/null; then
             echo -e "\nexport PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$rc"
             warn "PATH atualizado em ${rc}. Execute: source ${rc}"
@@ -647,7 +793,7 @@ ensure_path() {
 
 # ─── Teste de webhook ─────────────────────────────────────────────────────────
 test_webhook() {
-    [[ -z "$DISCORD_WEBHOOK" ]] && return
+    [[ -z "${DISCORD_WEBHOOK:-}" ]] && return
     section "Teste de webhook"
     ask "Enviar mensagem de teste ao Discord? (s/N)"; read -r resp
     if [[ "$resp" =~ ^[Ss]$ ]]; then
@@ -662,7 +808,7 @@ test_webhook() {
                     {\"name\":\"Máquina\",          \"value\":\"\`${MACHINE_NAME}\`\",               \"inline\":true},
                     {\"name\":\"CPU warn/crit\",    \"value\":\"\`${CPU_WARN}°C / ${CPU_CRIT}°C\`\", \"inline\":true},
                     {\"name\":\"GPU Edge warn\",    \"value\":\"\`${GPU_EDGE_WARN}°C\`\",            \"inline\":true},
-                    {\"name\":\"GPU Hotspot crit\", \"value\":\"\`${GPU_JCT_CRIT}°C\`\",             \"inline\":true},
+                    {\"name\":\"GPU Hotspot\",      \"value\":\"\`${GPU_JCT_WARN}°C / ${GPU_JCT_CRIT}°C\`\", \"inline\":true},
                     {\"name\":\"RAM warn/crit\",    \"value\":\"\`${RAM_WARN}°C / ${RAM_CRIT}°C\`\", \"inline\":true},
                     {\"name\":\"SSD warn/crit\",    \"value\":\"\`${SSD_WARN}°C / ${SSD_CRIT}°C\`\", \"inline\":true}
                 ],
@@ -693,7 +839,6 @@ After=network.target
 ExecStart=%h/.local/bin/sensors-monitor --daemon
 Restart=always
 RestartSec=10
-# Evita spam de restart em caso de falha grave
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
@@ -712,7 +857,7 @@ EOF
     if systemctl --user enable sensors-monitor.service >/dev/null 2>&1; then
         success "Serviço habilitado para iniciar com a sessão."
     else
-        warn "Não foi possível habilitar automaticamente. Você pode fazer isso manualmente depois."
+        warn "Não foi possível habilitar automaticamente."
     fi
 
     ask "Iniciar o serviço agora? (s/N)"; read -r resp
@@ -751,14 +896,21 @@ finish() {
         echo -e "    ${DIM}${SERVICE_FILE}${RESET}"
         echo ""
     fi
+    echo -e "  ${YELLOW}${BOLD}Mudanças desta versão:${RESET}"
+    echo -e "  ${DIM}• GPU Junction: warn 95°C / crit 105°C${RESET}"
+    echo -e "  ${DIM}• Persistência por leituras seguidas para evitar spam${RESET}"
+    echo -e "  ${DIM}• Histerese para não ficar alternando alerta/normal${RESET}"
+    echo -e "  ${DIM}• Cooldown separado por sensor e nível${RESET}"
+    echo -e "  ${DIM}• Alerta de fan parado quando GPU estiver quente${RESET}"
+    echo ""
     echo -e "  ${YELLOW}${BOLD}Lembrete de segurança:${RESET}"
     echo -e "  ${DIM}O arquivo de configuração contém o webhook do Discord.${RESET}"
     echo -e "  ${DIM}Não o inclua em backups não criptografados ou repositórios Git.${RESET}"
     echo ""
     echo -e "  ${DIM}Cooldown persistido em: /tmp/sensors-monitor-cooldown/${RESET}"
-    echo -e "  ${DIM}(limpo automaticamente no reboot da máquina)${RESET}"
+    echo -e "  ${DIM}Estado persistido em:   /tmp/sensors-monitor-state/${RESET}"
+    echo -e "  ${DIM}(limpos automaticamente no reboot da máquina)${RESET}"
     echo ""
-    echo -e "  ${DIM}Lembrete: mantenha os módulos de sensores corretamente carregados.${RESET}"
 }
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
