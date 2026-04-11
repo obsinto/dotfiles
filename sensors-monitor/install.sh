@@ -120,7 +120,7 @@ configure() {
     info "Persistência de alertas para evitar spam por pico curto."
     ask "Hotspot WARN: nº de leituras seguidas (padrão: 4):"; read -r GPU_JCT_WARN_STREAK_REQUIRED; GPU_JCT_WARN_STREAK_REQUIRED=${GPU_JCT_WARN_STREAK_REQUIRED:-4}
     ask "Hotspot CRIT: nº de leituras seguidas (padrão: 3):"; read -r GPU_JCT_CRIT_STREAK_REQUIRED; GPU_JCT_CRIT_STREAK_REQUIRED=${GPU_JCT_CRIT_STREAK_REQUIRED:-3}
-    ask "Histerese em °C para limpar estado (padrão: 3):"; read -r ALERT_HYSTERESIS; ALERT_HYSTERESIS=${ALERT_HYSTERESIS:-3}
+    ask "Histerese em °C para limpar estado (padrão: 5):"; read -r ALERT_HYSTERESIS; ALERT_HYSTERESIS=${ALERT_HYSTERESIS:-5}
 
     echo ""
     success "Configuração concluída."
