@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# PATH robusto: evita erro se o terminal iniciar com PATH vazio
+export PATH="$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
 # ─── Cores ───────────────────────────────────────────────────────────────────
 RESET='\033[0m'; BOLD='\033[1m'; RED='\033[0;31m'; YELLOW='\033[0;33m'
 GREEN='\033[0;32m'; CYAN='\033[0;36m'; DIM='\033[2m'; WHITE='\033[1;37m'
@@ -115,6 +118,9 @@ configure() {
     ask "Intervalo de atualização em segundos (padrão: 5):"; read -r INTERVAL; INTERVAL=${INTERVAL:-5}
     ask "Cooldown entre alertas Discord em segundos (padrão: 300):"; read -r NOTIFY_COOLDOWN; NOTIFY_COOLDOWN=${NOTIFY_COOLDOWN:-300}
     ask "Nome desta máquina no Discord (padrão: $(hostname)):"; read -r MACHINE_NAME; MACHINE_NAME=${MACHINE_NAME:-$(hostname)}
+    echo ""
+    info "Detectamos antes que sua RX 7600 dedicada está no PCI 0000:03:00.0."
+    ask "PCI da GPU dedicada/RX 7600 (padrão: 0000:03:00.0):"; read -r GPU_PCI; GPU_PCI=${GPU_PCI:-0000:03:00.0}
 
     echo ""
     info "Persistência de alertas para evitar spam por pico curto."
@@ -165,6 +171,9 @@ INTERVAL=${INTERVAL}
 NOTIFY_COOLDOWN=${NOTIFY_COOLDOWN}
 MACHINE_NAME="${MACHINE_NAME}"
 
+# GPU dedicada a monitorar — RX 7600 = 0000:03:00.0 no seu sistema
+GPU_PCI="${GPU_PCI}"
+
 # Anti-spam / persistência
 ALERT_HYSTERESIS=${ALERT_HYSTERESIS}
 CPU_WARN_STREAK_REQUIRED=2
@@ -194,6 +203,9 @@ install_monitor() {
 #!/usr/bin/env bash
 set -u
 
+# PATH robusto: necessário porque seu zsh já apareceu com PATH vazio
+export PATH="$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${PATH:-}"
+
 CONFIG="$HOME/.config/sensors-monitor/config.env"
 [[ -f "$CONFIG" ]] && source "$CONFIG"
 
@@ -220,6 +232,9 @@ SSD_CRIT=${SSD_CRIT:-75}
 
 NOTIFY_COOLDOWN=${NOTIFY_COOLDOWN:-300}
 MACHINE_NAME=${MACHINE_NAME:-$(hostname)}
+GPU_PCI=${GPU_PCI:-0000:03:00.0}
+GPU_HWMON_PATH=${GPU_HWMON_PATH:-}
+GPU_DRM_CARD_PATH=${GPU_DRM_CARD_PATH:-}
 
 ALERT_HYSTERESIS=${ALERT_HYSTERESIS:-3}
 
@@ -548,6 +563,72 @@ check_fan_stopped() {
     discord_notify "GPU Fan" "$gpu_temp" "WARN" "0"
 }
 
+
+find_gpu_hwmon_by_pci() {
+    local pci="$1" hw path
+    for hw in /sys/class/hwmon/hwmon*; do
+        [[ -e "$hw" ]] || continue
+        path=$(readlink -f "$hw/device" 2>/dev/null || true)
+        if [[ "$path" == *"$pci"* ]]; then
+            echo "$hw"
+            return 0
+        fi
+    done
+    return 1
+}
+
+find_gpu_drm_card_by_pci() {
+    local pci="$1" carddev card path
+    for carddev in /sys/class/drm/card*/device; do
+        [[ -e "$carddev" ]] || continue
+        card="${carddev%/device}"
+        [[ "$(basename "$card")" =~ ^card[0-9]+$ ]] || continue
+        path=$(readlink -f "$carddev" 2>/dev/null || true)
+        if [[ "$path" == *"$pci"* ]]; then
+            echo "$card"
+            return 0
+        fi
+    done
+    return 1
+}
+
+read_gpu_from_sysfs() {
+    local hw="$1" card="$2"
+    local edge="N/A" jct="N/A" mem="N/A" fan="N/A" pwr="N/A" busy="N/A"
+    local t base label_file label lower val
+
+    if [[ -d "$hw" ]]; then
+        for t in "$hw"/temp*_input; do
+            [[ -f "$t" ]] || continue
+            base="${t%_input}"
+            label_file="${base}_label"
+            label=$(cat "$label_file" 2>/dev/null || basename "$base")
+            lower=$(echo "$label" | tr '[:upper:]' '[:lower:]')
+            val=$(awk '{printf "%.1f", $1/1000}' "$t" 2>/dev/null || echo "N/A")
+
+            case "$lower" in
+                edge|*edge*|temp1) edge="$val" ;;
+                junction|*junction*|hotspot|*hot*|temp2) jct="$val" ;;
+                mem|memory|*mem*|temp3) mem="$val" ;;
+            esac
+        done
+
+        # Fallback por índice: em amdgpu geralmente temp1=edge, temp2=junction, temp3=mem
+        [[ "$edge" == "N/A" && -f "$hw/temp1_input" ]] && edge=$(awk '{printf "%.1f", $1/1000}' "$hw/temp1_input" 2>/dev/null || echo "N/A")
+        [[ "$jct"  == "N/A" && -f "$hw/temp2_input" ]] && jct=$(awk  '{printf "%.1f", $1/1000}' "$hw/temp2_input" 2>/dev/null || echo "N/A")
+        [[ "$mem"  == "N/A" && -f "$hw/temp3_input" ]] && mem=$(awk  '{printf "%.1f", $1/1000}' "$hw/temp3_input" 2>/dev/null || echo "N/A")
+
+        [[ -f "$hw/fan1_input" ]] && fan=$(cat "$hw/fan1_input" 2>/dev/null || echo "N/A")
+        [[ -f "$hw/power1_average" ]] && pwr=$(awk '{printf "%.1f", $1/1000000}' "$hw/power1_average" 2>/dev/null || echo "N/A")
+    fi
+
+    if [[ -n "$card" && -f "$card/device/gpu_busy_percent" ]]; then
+        busy=$(cat "$card/device/gpu_busy_percent" 2>/dev/null || echo "N/A")
+    fi
+
+    echo "$edge $jct $mem $fan $pwr $busy"
+}
+
 parse_sensors() {
     python3 -c "
 import json, sys
@@ -665,6 +746,7 @@ render_ui() {
     local RAM1=${10}
     local RAM2=${11}
     local MB_FAN=${12}
+    local GPU_BUSY=${13:-N/A}
 
     tput civis 2>/dev/null || true
     clear || true
@@ -704,6 +786,8 @@ render_ui() {
 
     [[ "$GPU_PWR" != "N/A" ]] && \
         printf "  ${DIM}%-26s${RESET} ${WHITE}%s W${RESET}  ${DIM}(cap: 145W)${RESET}\n" "Consumo (PPT):" "$GPU_PWR"
+    [[ "$GPU_BUSY" != "N/A" ]] && \
+        printf "  ${DIM}%-26s${RESET} ${WHITE}%s%%${RESET}\n" "Uso da GPU:" "$GPU_BUSY"
     echo ""
 
     echo -e "  ${BOLD}${CYAN}[ RAM — DDR5 ]${RESET}"
@@ -746,6 +830,30 @@ main_loop() {
         read -r CPU_TEMP GPU_EDGE GPU_JCT GPU_MEM GPU_FAN GPU_PWR ETH_TEMP SSD_TEMP RAM1 RAM2 MB_FAN \
             < <(parse_sensors <<< "$SENSORS_JSON")
 
+        # Correção principal: força a GPU dedicada pela PCI, evitando confundir RX 7600 com iGPU Ryzen.
+        if [[ -z "${GPU_HWMON_PATH:-}" || ! -d "${GPU_HWMON_PATH}" ]]; then
+            GPU_HWMON_PATH=$(find_gpu_hwmon_by_pci "$GPU_PCI" || true)
+            [[ -n "$GPU_HWMON_PATH" ]] && log_msg "INFO" "GPU hwmon detectado: ${GPU_HWMON_PATH} (${GPU_PCI})"
+        fi
+
+        if [[ -z "${GPU_DRM_CARD_PATH:-}" || ! -d "${GPU_DRM_CARD_PATH}" ]]; then
+            GPU_DRM_CARD_PATH=$(find_gpu_drm_card_by_pci "$GPU_PCI" || true)
+            [[ -n "$GPU_DRM_CARD_PATH" ]] && log_msg "INFO" "GPU DRM card detectado: ${GPU_DRM_CARD_PATH} (${GPU_PCI})"
+        fi
+
+        GPU_BUSY="N/A"
+        if [[ -n "${GPU_HWMON_PATH:-}" ]]; then
+            read -r SYS_GPU_EDGE SYS_GPU_JCT SYS_GPU_MEM SYS_GPU_FAN SYS_GPU_PWR SYS_GPU_BUSY \
+                < <(read_gpu_from_sysfs "$GPU_HWMON_PATH" "${GPU_DRM_CARD_PATH:-}")
+
+            [[ "$SYS_GPU_EDGE" != "N/A" ]] && GPU_EDGE="$SYS_GPU_EDGE"
+            [[ "$SYS_GPU_JCT"  != "N/A" ]] && GPU_JCT="$SYS_GPU_JCT"
+            [[ "$SYS_GPU_MEM"  != "N/A" ]] && GPU_MEM="$SYS_GPU_MEM"
+            [[ "$SYS_GPU_FAN"  != "N/A" ]] && GPU_FAN="$SYS_GPU_FAN"
+            [[ "$SYS_GPU_PWR"  != "N/A" ]] && GPU_PWR="$SYS_GPU_PWR"
+            [[ "$SYS_GPU_BUSY" != "N/A" ]] && GPU_BUSY="$SYS_GPU_BUSY"
+        fi
+
         RAM_TEMP="N/A"
         if [[ "$RAM1" != "N/A" && "$RAM2" != "N/A" ]]; then
             RAM_TEMP=$(awk "BEGIN{printf \"%.1f\", ($RAM1 + $RAM2) / 2}")
@@ -765,7 +873,7 @@ main_loop() {
         if [[ "$DAEMON_MODE" -eq 0 ]]; then
             NOW=$(date '+%d/%m/%Y %H:%M:%S')
             render_ui "$NOW" "$CPU_TEMP" "$GPU_EDGE" "$GPU_JCT" "$GPU_MEM" \
-                      "$GPU_FAN" "$GPU_PWR" "$ETH_TEMP" "$SSD_TEMP" "$RAM1" "$RAM2" "$MB_FAN"
+                      "$GPU_FAN" "$GPU_PWR" "$ETH_TEMP" "$SSD_TEMP" "$RAM1" "$RAM2" "$MB_FAN" "$GPU_BUSY"
         fi
 
         sleep "$INTERVAL"
@@ -784,7 +892,7 @@ ensure_path() {
     if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
         local rc="$HOME/.bashrc"
         [[ "${SHELL:-}" == */zsh ]] && rc="$HOME/.zshrc"
-        if ! grep -qF 'export PATH="$HOME/.local/bin:$PATH"' "$rc" 2>/dev/null; then
+        if ! grep -qF 'export PATH="$HOME/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:\${PATH:-}"' "$rc" 2>/dev/null; then
             echo -e "\nexport PATH=\"\$HOME/.local/bin:\$PATH\"" >> "$rc"
             warn "PATH atualizado em ${rc}. Execute: source ${rc}"
         fi
@@ -902,6 +1010,7 @@ finish() {
     echo -e "  ${DIM}• Histerese para não ficar alternando alerta/normal${RESET}"
     echo -e "  ${DIM}• Cooldown separado por sensor e nível${RESET}"
     echo -e "  ${DIM}• Alerta de fan parado quando GPU estiver quente${RESET}"
+    echo -e "  ${DIM}• RX 7600 detectada pelo PCI configurado, evitando confusão com iGPU${RESET}"
     echo ""
     echo -e "  ${YELLOW}${BOLD}Lembrete de segurança:${RESET}"
     echo -e "  ${DIM}O arquivo de configuração contém o webhook do Discord.${RESET}"
