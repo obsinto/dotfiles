@@ -50,50 +50,62 @@ install_dependencies() {
     case $DISTRO in
         ubuntu|debian|pop)
             sudo apt update
-            sudo apt install -y git curl zsh wget fontconfig unzip
+            sudo apt install -y git curl zsh wget fontconfig unzip xz-utils
             ;;
         fedora)
-            sudo dnf install -y git curl zsh wget fontconfig unzip
+            sudo dnf install -y git curl zsh wget fontconfig unzip xz
             ;;
         arch|manjaro)
-            sudo pacman -S --noconfirm git curl zsh wget fontconfig unzip
+            sudo pacman -S --noconfirm git curl zsh wget fontconfig unzip xz
             ;;
         *)
             warn "Distribuição não reconhecida. Tentando com apt..."
             sudo apt update
-            sudo apt install -y git curl zsh wget fontconfig unzip
+            sudo apt install -y git curl zsh wget fontconfig unzip xz-utils
             ;;
     esac
 }
 
-# Instalar fontes Nerd Fonts
+# Verificar se a JetBrainsMono Nerd Font já existe no sistema
+has_jetbrains_nerd_font() {
+    # Primeiro tenta pelo fc-match, depois confirma pelo fc-list.
+    # Isso evita baixar a fonte de novo quando ela já está instalada.
+    fc-match "JetBrainsMono Nerd Font" 2>/dev/null | grep -qi "JetBrains" &&     fc-list 2>/dev/null | grep -Eiq "JetBrainsMono.*Nerd|JetBrains Mono.*Nerd"
+}
+
+# Instalar JetBrainsMono Nerd Font somente se ainda não existir
 install_fonts() {
-    header "Instalando MesloLGS NF (Nerd Fonts)"
-    
-    FONT_DIR="$HOME/.local/share/fonts"
+    header "Verificando fonte JetBrainsMono Nerd Font"
+
+    FONT_DIR="$HOME/.local/share/fonts/JetBrainsMonoNerdFont"
+    FONT_ARCHIVE="/tmp/JetBrainsMonoNerdFont.tar.xz"
+    FONT_URL="https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz"
+
+    if has_jetbrains_nerd_font; then
+        log "JetBrainsMono Nerd Font já está instalada. Pulando download."
+        fc-match "JetBrainsMono Nerd Font" || true
+        return
+    fi
+
+    warn "JetBrainsMono Nerd Font não encontrada. Instalando agora..."
     mkdir -p "$FONT_DIR"
-    
-    # URLs das fontes MesloLGS NF
-    FONTS=(
-        "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Regular.ttf"
-        "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold.ttf"
-        "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Italic.ttf"
-        "https://github.com/romkatv/powerlevel10k-media/raw/master/MesloLGS%20NF%20Bold%20Italic.ttf"
-    )
-    
-    for font_url in "${FONTS[@]}"; do
-        font_name=$(basename "$font_url" | sed 's/%20/ /g')
-        if [ ! -f "$FONT_DIR/$font_name" ]; then
-            log "Baixando $font_name..."
-            wget -q "$font_url" -O "$FONT_DIR/$font_name"
-        else
-            log "$font_name já existe"
-        fi
-    done
-    
-    # Atualizar cache das fontes
+
+    log "Baixando JetBrainsMono Nerd Font..."
+    wget -q --show-progress "$FONT_URL" -O "$FONT_ARCHIVE"
+
+    log "Extraindo fontes em $FONT_DIR..."
+    tar -xf "$FONT_ARCHIVE" -C "$FONT_DIR"
+
+    log "Atualizando cache das fontes..."
     fc-cache -fv >/dev/null 2>&1
-    log "Fontes instaladas e cache atualizado"
+
+    if has_jetbrains_nerd_font; then
+        log "JetBrainsMono Nerd Font instalada com sucesso!"
+        fc-match "JetBrainsMono Nerd Font" || true
+    else
+        error "A fonte foi baixada, mas o sistema não conseguiu detectá-la. Verifique: $FONT_DIR"
+        exit 1
+    fi
 }
 
 # Instalar Oh My Zsh
@@ -264,7 +276,7 @@ local wezterm = require 'wezterm'
 
 return {
   -- ========== FONTES ==========
-  font = wezterm.font("MesloLGS NF", { weight = "Regular" }),
+  font = wezterm.font("JetBrainsMono Nerd Font", { weight = "Regular" }),
   font_size = 12.5,
   line_height = 1.2,
   harfbuzz_features = { "calt=1", "clig=1", "liga=1", "rlig=1" },
@@ -468,7 +480,7 @@ main() {
     ║  • Powerlevel10k                        ║
     ║  • Plugins: autosuggestions + syntax    ║
     ║  • WezTerm customizado (Catppuccin)     ║
-    ║  • Fontes Nerd Fonts                    ║
+    ║  • JetBrainsMono Nerd Font              ║
     ║  • Aliases personalizados               ║
     ╚══════════════════════════════════════════╝
 EOF
