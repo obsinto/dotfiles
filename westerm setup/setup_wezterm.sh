@@ -166,20 +166,25 @@ install_zsh_plugins() {
 }
 
 # Configurar .zshrc
+# Configurar .zshrc
 configure_zshrc() {
     header "Configurando .zshrc"
     
-    # Backup do .zshrc atual se existir
+    local OLD_CONFIGS=""
+
+    # Backup do .zshrc atual se existir e extração de configs antigas
     if [ -f "$HOME/.zshrc" ]; then
         cp "$HOME/.zshrc" "$HOME/.zshrc.backup.$(date +%Y%m%d_%H%M%S)"
         log "Backup do .zshrc criado"
+        
+        # MÁGICA AQUI: Captura exports, aliases e inicializações (como NVM) do arquivo antigo.
+        # O 'grep -v' evita copiar variáveis padrão do Oh My Zsh para não gerar conflito.
+        OLD_CONFIGS=$(grep -E '^(export |alias |\[ -s |source )' "$HOME/.zshrc" | grep -vE 'ZSH=|ZSH_THEME|plugins=')
     fi
     
-    # Criar novo .zshrc baseado na configuração atual
+    # Criar novo .zshrc com as ferramentas do terminal
     cat > "$HOME/.zshrc" << 'EOF'
 # Enable Powerlevel10k instant prompt. Should stay close to the top of ~/.zshrc.
-# Initialization code that may require console input (password prompts, [y/n]
-# confirmations, etc.) must go above this block; everything else may go below.
 if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
   source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
 fi
@@ -201,14 +206,9 @@ export PATH="$HOME/.local/bin:$PATH"
 # ──────────────────────────────────────────────────────────────────────────────
 # Wrapper para sgpt: aceita prompt sem precisar de ASPAS e desliga globbing
 # ──────────────────────────────────────────────────────────────────────────────
-
-# Função interna que chama o binário real, juntando tudo em UM só argumento
 _sgpt_wrap() {
-  # $* -> todos os args unidos por espaço
   command sgpt "$*"
 }
-
-# Alias que: 1) desliga globbing, 2) chama o wrap
 alias sgpt='noglob _sgpt_wrap'
 
 # Laravel Sail alias
@@ -218,7 +218,16 @@ alias sail='[ -f vendor/bin/sail ] && bash vendor/bin/sail'
 [[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
 EOF
 
-    log ".zshrc configurado com suas preferências"
+    # Se encontrou configurações antigas, anexa no final do novo arquivo
+    if [ -n "$OLD_CONFIGS" ]; then
+        log "Restaurando configurações do usuário (PATHs, NVM, aliases)..."
+        echo -e "\n# ──────────────────────────────────────────────────────────────────────────────" >> "$HOME/.zshrc"
+        echo -e "# CONFIGURAÇÕES ORIGINAIS DO USUÁRIO RESTAURADAS" >> "$HOME/.zshrc"
+        echo -e "# ──────────────────────────────────────────────────────────────────────────────\n" >> "$HOME/.zshrc"
+        echo "$OLD_CONFIGS" >> "$HOME/.zshrc"
+    fi
+
+    log ".zshrc configurado com suas preferências e histórico mantido"
 }
 
 # Instalar WezTerm
