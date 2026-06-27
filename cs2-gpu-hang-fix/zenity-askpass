@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Helper askpass pra sudo -A em sessao Wayland (zenity).
+exec zenity --password --title="${SUDO_PROMPT:-sudo}" 2>/dev/null

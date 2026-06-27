@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Fixa a RX 7600 (03:00.0) em clock estavel enquanto o CS2 roda, evitando o
+# gfx ring timeout que estoura nas transicoes de power-state da RDNA3.
+# Volta pra 'auto' ao sair, inclusive em crash/SIGTERM (trap). NAO usa exec
+# de proposito: precisamos rodar o restore depois que o jogo termina.
+set -u
+
+PERF=/sys/bus/pci/devices/0000:03:00.0/power_dpm_force_performance_level
+
+restore() { [ -w "$PERF" ] && echo auto > "$PERF" 2>/dev/null || true; }
+trap restore EXIT INT TERM
+
+if [ -w "$PERF" ]; then
+    echo high > "$PERF" 2>/dev/null || true
+else
+    echo "cs2-stable: sem permissao de escrita em $PERF (regra udev aplicada?), seguindo sem pin" >&2
+fi
+
+"$@"
+status=$?
+restore
+exit "$status"
